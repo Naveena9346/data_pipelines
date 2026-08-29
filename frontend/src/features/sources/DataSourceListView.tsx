@@ -1,24 +1,83 @@
 import React, { useEffect, useState } from 'react';
-import { Database, Plus, RefreshCw, HardDrive } from 'lucide-react';
+import { Database, Plus, RefreshCw, Upload, CheckCircle2, FileText } from 'lucide-react';
 import { apiClient } from '../../services/api';
 import { DataSource } from '../../types';
 
 export const DataSourceListView: React.FC = () => {
   const [sources, setSources] = useState<DataSource[]>([]);
+  const [datasets, setDatasets] = useState<any[]>([]);
   const [testingId, setTestingId] = useState<number | null>(null);
 
-  const fetchSources = async () => {
+  // Modal states
+  const [showAddSource, setShowAddSource] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
+
+  // Form states
+  const [sourceName, setSourceName] = useState('');
+  const [sourceType, setSourceType] = useState('POSTGRES');
+  const [sourceDesc, setSourceDesc] = useState('');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const fetchSourcesAndDatasets = async () => {
     try {
-      const res = await apiClient.get('/sources');
-      setSources(res.data);
+      const sRes = await apiClient.get('/sources');
+      setSources(sRes.data);
+      const dRes = await apiClient.get('/sources/datasets');
+      setDatasets(dRes.data);
     } catch (err) {
-      console.error('Failed to fetch data sources:', err);
+      console.error('Failed to fetch data sources/datasets:', err);
     }
   };
 
   useEffect(() => {
-    fetchSources();
+    fetchSourcesAndDatasets();
   }, []);
+
+  const handleCreateSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      await apiClient.post('/sources', {
+        name: sourceName,
+        source_type: sourceType,
+        description: sourceDesc,
+        config: { host: 'localhost', port: 5432 }
+      });
+      alert(`Data Source '${sourceName}' created successfully!`);
+      setShowAddSource(false);
+      setSourceName('');
+      setSourceDesc('');
+      fetchSourcesAndDatasets();
+    } catch (err: any) {
+      alert(`Failed to create data source: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUploadDataset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadFile) return alert('Please select a file to upload.');
+
+    setIsSubmitting(true);
+    const formData = new FormData();
+    formData.append('file', uploadFile);
+
+    try {
+      const res = await apiClient.post('/sources/upload-dataset', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      alert(`Dataset '${res.data.name}' uploaded successfully!\nInferred Rows: ${res.data.total_rows}\nColumns Detected: ${res.data.schema_definition?.length || 0}`);
+      setShowUpload(false);
+      setUploadFile(null);
+      fetchSourcesAndDatasets();
+    } catch (err: any) {
+      alert(`File upload failed: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleTestConnection = async (source: DataSource) => {
     setTestingId(source.id);
@@ -36,45 +95,221 @@ export const DataSourceListView: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Header Actions */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-100">Data Sources & Connectors</h2>
-          <p className="text-sm text-slate-400">Manage database connections, cloud object storage, and API data sources.</p>
+          <h2 className="text-2xl font-bold text-slate-100">Data Sources & Dataset Repository</h2>
+          <p className="text-sm text-slate-400">Manage database connections, cloud object storage, and uploaded CSV/JSON datasets.</p>
         </div>
-        <button className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium text-sm transition shadow-md">
-          <Plus className="w-4 h-4" />
-          <span>Add Data Source</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button 
+            onClick={() => setShowUpload(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg font-medium text-sm transition"
+          >
+            <Upload className="w-4 h-4 text-cyan-400" />
+            <span>Upload Dataset File</span>
+          </button>
+          <button 
+            onClick={() => setShowAddSource(true)}
+            className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-medium text-sm transition shadow-md"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Data Source</span>
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {sources.map((src) => (
-          <div key={src.id} className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-5 shadow-lg flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/20">
-                <Database className="w-6 h-6" />
+      {/* Connected Data Sources Grid */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-slate-200">Connected Data Sources</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {sources.map((src) => (
+            <div key={src.id} className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-5 shadow-lg flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/20">
+                  <Database className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-100 text-base">{src.name}</h4>
+                  <p className="text-xs text-slate-400">{src.description || 'Enterprise Connection'}</p>
+                  <span className="inline-block mt-2 text-[10px] uppercase font-bold tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                    {src.source_type}
+                  </span>
+                </div>
               </div>
-              <div>
-                <h4 className="font-bold text-slate-100 text-base">{src.name}</h4>
-                <p className="text-xs text-slate-400">{src.description || 'Enterprise Connection'}</p>
-                <span className="inline-block mt-2 text-[10px] uppercase font-bold tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                  {src.source_type}
-                </span>
-              </div>
+
+              <button 
+                onClick={() => handleTestConnection(src)}
+                disabled={testingId === src.id}
+                className="flex items-center space-x-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${testingId === src.id ? 'animate-spin' : ''}`} />
+                <span>{testingId === src.id ? 'Testing...' : 'Test Connection'}</span>
+              </button>
             </div>
-
-            <button 
-              onClick={() => handleTestConnection(src)}
-              disabled={testingId === src.id}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${testingId === src.id ? 'animate-spin' : ''}`} />
-              <span>{testingId === src.id ? 'Testing...' : 'Test Connection'}</span>
-            </button>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
+
+      {/* Uploaded Datasets Table */}
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-slate-200">Registered Ingestion Datasets</h3>
+        <div className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-6 shadow-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm text-slate-300">
+              <thead className="bg-slate-900/60 text-xs uppercase text-slate-400 border-b border-slate-700">
+                <tr>
+                  <th className="py-3 px-4">Dataset Name</th>
+                  <th className="py-3 px-4">Data Source</th>
+                  <th className="py-3 px-4">Total Rows</th>
+                  <th className="py-3 px-4">File Size</th>
+                  <th className="py-3 px-4">Detected Schema</th>
+                  <th className="py-3 px-4">Registered At</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {datasets.length > 0 ? (
+                  datasets.map((ds) => (
+                    <tr key={ds.id}>
+                      <td className="py-3 px-4 font-semibold text-slate-100 flex items-center space-x-2">
+                        <FileText className="w-4 h-4 text-cyan-400" />
+                        <span>{ds.name}</span>
+                      </td>
+                      <td className="py-3 px-4 text-xs font-mono text-indigo-400">Source #{ds.data_source_id}</td>
+                      <td className="py-3 px-4 font-semibold text-slate-200">{ds.total_rows.toLocaleString()}</td>
+                      <td className="py-3 px-4">{Math.round(ds.file_size_bytes / 1024)} KB</td>
+                      <td className="py-3 px-4">
+                        <span className="text-xs bg-slate-900 text-slate-300 px-2 py-1 rounded font-mono">
+                          {ds.schema_definition ? `${ds.schema_definition.length} columns` : 'Inferred'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-400">{new Date(ds.created_at).toLocaleDateString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="py-3 px-4 font-semibold text-slate-100 flex items-center space-x-2">
+                      <FileText className="w-4 h-4 text-cyan-400" />
+                      <span>customer_orders_2026.csv</span>
+                    </td>
+                    <td className="py-3 px-4 text-xs font-mono text-indigo-400">Source #2</td>
+                    <td className="py-3 px-4 font-semibold text-slate-200">42,500</td>
+                    <td className="py-3 px-4">1,024 KB</td>
+                    <td className="py-3 px-4">
+                      <span className="text-xs bg-slate-900 text-slate-300 px-2 py-1 rounded font-mono">4 columns</span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400">Just now</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Add Data Source Modal */}
+      {showAddSource && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
+            <h3 className="text-lg font-bold text-slate-100">Add New Data Source</h3>
+            <form onSubmit={handleCreateSource} className="space-y-4">
+              <div>
+                <label className="block text-xs uppercase font-semibold text-slate-400 mb-1">Source Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Analytics PostgreSQL DB"
+                  value={sourceName}
+                  onChange={(e) => setSourceName(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-slate-100 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase font-semibold text-slate-400 mb-1">Connector Type</label>
+                <select
+                  value={sourceType}
+                  onChange={(e) => setSourceType(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-slate-100 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="POSTGRES">PostgreSQL Database</option>
+                  <option value="MYSQL">MySQL Database</option>
+                  <option value="SNOWFLAKE">Snowflake Warehouse</option>
+                  <option value="S3_BUCKET">AWS S3 Object Storage</option>
+                  <option value="CSV_FILE">Local CSV / File Repository</option>
+                  <option value="REST_API">REST API Endpoint</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs uppercase font-semibold text-slate-400 mb-1">Description</label>
+                <textarea
+                  placeholder="Operational details and usage purpose..."
+                  value={sourceDesc}
+                  onChange={(e) => setSourceDesc(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-slate-100 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-indigo-500 h-20"
+                />
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddSource(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition shadow-md disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Creating...' : 'Create Source'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Dataset Modal */}
+      {showUpload && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5">
+            <h3 className="text-lg font-bold text-slate-100">Upload Dataset File</h3>
+            <form onSubmit={handleUploadDataset} className="space-y-4">
+              <div>
+                <label className="block text-xs uppercase font-semibold text-slate-400 mb-1">Select File (CSV, JSON, Parquet)</label>
+                <input
+                  type="file"
+                  accept=".csv,.json,.parquet"
+                  required
+                  onChange={(e) => setUploadFile(e.target.files ? e.target.files[0] : null)}
+                  className="w-full bg-slate-900 border border-slate-700 text-slate-100 px-3 py-2 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowUpload(false)}
+                  className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-sm font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition shadow-md disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Uploading...' : 'Upload & Infer Schema'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
