@@ -4,8 +4,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.db import async_engine, Base, AsyncSessionLocal
 from app.api.v1.router import api_router
-from app.domain.auth.service import seed_initial_roles
-
+from app.scripts.seed_db import seed_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -13,9 +12,8 @@ async def lifespan(app: FastAPI):
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     
-    # Seed initial roles
-    async with AsyncSessionLocal() as session:
-        await seed_initial_roles(session)
+    # Seed initial roles and operational data
+    await seed_data()
 
     yield
 

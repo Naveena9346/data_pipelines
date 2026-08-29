@@ -1,15 +1,22 @@
+import os
+import shutil
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.core.db import get_db
+from app.core.config import settings
 from app.api.deps import get_current_user
 from app.models.user import User
+from app.models.connection import DataSource, Dataset, SourceTypeEnum
 from app.schemas.connection import (
-    DataSourceCreate, DataSourceRead, TestConnectionRequest, TestConnectionResponse
+    DataSourceCreate, DataSourceRead, TestConnectionRequest, TestConnectionResponse, DatasetRead
 )
 from app.domain.connections.service import (
     create_data_source, test_connection_service, get_data_sources
 )
+from app.domain.ingestion.extractors import IngestionExtractor
+from app.domain.ingestion.schema_infer import SchemaInferEngine
 
 router = APIRouter(prefix="/sources", tags=["Data Sources"])
 
@@ -40,3 +47,63 @@ async def test_connection(
 ):
     res = await test_connection_service(payload)
     return res
+
+
+@router.post("/upload-dataset", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
+async def upload_dataset(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    file_ext = file.filename.split(".")[-1].upper()
+    if file_ext not in ["CSV", "JSON", "PARQUET"]:
+        raise HTTPException(status_code=400, detail="Only CSV, JSON, and PARQUET files are supported.")
+
+    file_location = os.path.join(settings.DATA_STORAGE_PATH, file.filename)
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    file_size = os.path.getsize(file_location)
+
+    # Ingest and infer schema using Polars
+    format_type = f"{file_ext}_FILE"
+    df = IngestionExtractor.extract_file(file_location, format_type)
+    schema_info = SchemaInferEngine.infer_schema_from_df(df)
+
+    # Create default Local File Data Source if not exists
+    res = await db.execute(select(DataSource).where(DataSource.source_type == SourceTypeEnum.CSV_FILE))
+    ds = res.scalars().first()
+    if not ds:
+        ds = DataSource(
+            name="Local File Repository",
+            description="Uploaded CSV/JSON dataset repository",
+            source_type=SourceTypeEnum.CSV_FILE,
+            encrypted_config="{}",
+            created_by_id=current_user.id,
+            is_active=True
+        )
+        db.add(ds)
+        await db.flush()
+
+    dataset = Dataset(
+        name=file.filename,
+        description=f"Uploaded dataset ({file_ext} format)",
+        data_source_id=ds.id,
+        file_path=file_location,
+        schema_definition=schema_info,
+        total_rows=df.height,
+        file_size_bytes=file_size
+    )
+    db.add(dataset)
+    await db.commit()
+    await db.refresh(dataset)
+    return dataset
+
+
+@router.get("/datasets", response_model=List[DatasetRead])
+async def list_datasets(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(select(Dataset))
+    return list(result.scalars().all())

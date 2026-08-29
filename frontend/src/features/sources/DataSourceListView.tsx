@@ -1,13 +1,39 @@
-import React from 'react';
-import { Database, Plus, CheckCircle, RefreshCw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Database, Plus, RefreshCw, HardDrive } from 'lucide-react';
+import { apiClient } from '../../services/api';
+import { DataSource } from '../../types';
 
 export const DataSourceListView: React.FC = () => {
-  const sources = [
-    { id: 1, name: 'Main Analytics PostgreSQL', type: 'POSTGRES', status: 'Connected', host: 'postgres:5432' },
-    { id: 2, name: 'S3 Raw Data Lake Bucket', type: 'S3_BUCKET', status: 'Connected', host: 's3://dataforge-lake/' },
-    { id: 3, name: 'Stripe Payments REST API', type: 'REST_API', status: 'Connected', host: 'api.stripe.com/v1' },
-    { id: 4, name: 'Local CSV Upload Storage', type: 'CSV_FILE', status: 'Connected', host: './data_storage/' }
-  ];
+  const [sources, setSources] = useState<DataSource[]>([]);
+  const [testingId, setTestingId] = useState<number | null>(null);
+
+  const fetchSources = async () => {
+    try {
+      const res = await apiClient.get('/sources');
+      setSources(res.data);
+    } catch (err) {
+      console.error('Failed to fetch data sources:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchSources();
+  }, []);
+
+  const handleTestConnection = async (source: DataSource) => {
+    setTestingId(source.id);
+    try {
+      const res = await apiClient.post('/sources/test', {
+        source_type: source.source_type,
+        config: {}
+      });
+      alert(`Connection Test for '${source.name}':\nStatus: ${res.data.success ? 'SUCCESS' : 'FAILED'}\nMessage: ${res.data.message}\nLatency: ${res.data.latency_ms}ms`);
+    } catch (err: any) {
+      alert(`Connection test failed: ${err.message}`);
+    } finally {
+      setTestingId(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -31,19 +57,20 @@ export const DataSourceListView: React.FC = () => {
               </div>
               <div>
                 <h4 className="font-bold text-slate-100 text-base">{src.name}</h4>
-                <p className="text-xs font-mono text-slate-400">{src.host}</p>
+                <p className="text-xs text-slate-400">{src.description || 'Enterprise Connection'}</p>
                 <span className="inline-block mt-2 text-[10px] uppercase font-bold tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                  {src.type}
+                  {src.source_type}
                 </span>
               </div>
             </div>
 
             <button 
-              onClick={() => alert(`Testing connectivity to ${src.name}... Success! (Latency: 1.4ms)`)}
-              className="flex items-center space-x-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition"
+              onClick={() => handleTestConnection(src)}
+              disabled={testingId === src.id}
+              className="flex items-center space-x-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition disabled:opacity-50"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Test Connection</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${testingId === src.id ? 'animate-spin' : ''}`} />
+              <span>{testingId === src.id ? 'Testing...' : 'Test Connection'}</span>
             </button>
           </div>
         ))}

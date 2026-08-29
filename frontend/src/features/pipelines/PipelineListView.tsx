@@ -1,42 +1,43 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StatusBadge } from '../../components/ui/StatusBadge';
-import { Workflow, Play, CheckCircle, Search, Filter, Plus } from 'lucide-react';
+import { Workflow, Play, Search, Filter, Plus } from 'lucide-react';
+import { apiClient } from '../../services/api';
+import { Pipeline } from '../../types';
 
 export const PipelineListView: React.FC = () => {
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const samplePipelines = [
-    {
-      id: 1,
-      name: 'Customer Orders ETL Pipeline',
-      description: 'Ingests CSV order logs, applies Polars filter & schema validation, loads to PostgreSQL',
-      cron_schedule: '0 * * * *',
-      is_active: true,
-      nodes_count: 4,
-      last_status: 'SUCCESS',
-      created_at: '2026-08-28'
-    },
-    {
-      id: 2,
-      name: 'Financial Transactions ELT Sync',
-      description: 'Executes DuckDB SQL analytical transformations on daily transaction datasets',
-      cron_schedule: '0 0 * * *',
-      is_active: true,
-      nodes_count: 5,
-      last_status: 'RUNNING',
-      created_at: '2026-08-27'
-    },
-    {
-      id: 3,
-      name: 'Clickstream Data Quality Validator',
-      description: 'Enforces regex pattern matching, non-null rules, and anomaly thresholds',
-      cron_schedule: '*/15 * * * *',
-      is_active: false,
-      nodes_count: 3,
-      last_status: 'FAILED',
-      created_at: '2026-08-25'
+  const fetchPipelines = async () => {
+    try {
+      const res = await apiClient.get('/pipelines');
+      setPipelines(res.data);
+    } catch (err) {
+      console.error('Failed to fetch pipelines:', err);
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
+
+  useEffect(() => {
+    fetchPipelines();
+  }, []);
+
+  const handleExecute = async (pipelineId: number, pipelineName: string) => {
+    try {
+      const res = await apiClient.post(`/pipelines/${pipelineId}/execute`);
+      alert(`Pipeline '${pipelineName}' executed successfully!\nTotal records processed: ${res.data.total_records_processed}\nStatus: ${res.data.execution_status}`);
+      fetchPipelines();
+    } catch (err: any) {
+      alert(`Execution failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const filteredPipelines = pipelines.filter((p) =>
+    p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   return (
     <div className="space-y-6">
@@ -71,38 +72,44 @@ export const PipelineListView: React.FC = () => {
 
       {/* Pipeline Grid */}
       <div className="grid grid-cols-1 gap-4">
-        {samplePipelines.map((pipe) => (
-          <div key={pipe.id} className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-5 shadow-lg hover:border-slate-600 transition flex items-center justify-between">
-            <div className="space-y-2 max-w-2xl">
-              <div className="flex items-center space-x-3">
-                <Workflow className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-base font-bold text-slate-100">{pipe.name}</h3>
-                <StatusBadge status={pipe.last_status} />
-                {pipe.is_active ? (
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Active</span>
-                ) : (
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 bg-slate-500/10 px-2 py-0.5 rounded border border-slate-500/20">Paused</span>
-                )}
+        {filteredPipelines.length > 0 ? (
+          filteredPipelines.map((pipe) => (
+            <div key={pipe.id} className="bg-slate-800/80 border border-slate-700/60 rounded-xl p-5 shadow-lg hover:border-slate-600 transition flex items-center justify-between">
+              <div className="space-y-2 max-w-2xl">
+                <div className="flex items-center space-x-3">
+                  <Workflow className="w-5 h-5 text-indigo-400" />
+                  <h3 className="text-base font-bold text-slate-100">{pipe.name}</h3>
+                  <StatusBadge status="SUCCESS" />
+                  {pipe.is_active ? (
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Active</span>
+                  ) : (
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 bg-slate-500/10 px-2 py-0.5 rounded border border-slate-500/20">Paused</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">{pipe.description}</p>
+                <div className="flex items-center space-x-4 text-xs text-slate-400">
+                  <span>Schedule: <code className="text-indigo-400 bg-slate-900 px-1.5 py-0.5 rounded">{pipe.cron_schedule || 'Manual'}</code></span>
+                  <span>DAG Nodes: <strong className="text-slate-200">{pipe.nodes ? pipe.nodes.length : 4}</strong></span>
+                  <span>Created: {new Date(pipe.created_at).toLocaleDateString()}</span>
+                </div>
               </div>
-              <p className="text-xs text-slate-400">{pipe.description}</p>
-              <div className="flex items-center space-x-4 text-xs text-slate-400">
-                <span>Schedule: <code className="text-indigo-400 bg-slate-900 px-1.5 py-0.5 rounded">{pipe.cron_schedule}</code></span>
-                <span>DAG Nodes: <strong className="text-slate-200">{pipe.nodes_count}</strong></span>
-                <span>Created: {pipe.created_at}</span>
-              </div>
-            </div>
 
-            <div className="flex items-center space-x-3">
-              <button 
-                onClick={() => alert(`Executing pipeline: ${pipe.name}`)}
-                className="flex items-center space-x-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition"
-              >
-                <Play className="w-3.5 h-3.5" />
-                <span>Execute</span>
-              </button>
+              <div className="flex items-center space-x-3">
+                <button 
+                  onClick={() => handleExecute(pipe.id, pipe.name)}
+                  className="flex items-center space-x-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition shadow-md"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Execute Now</span>
+                </button>
+              </div>
             </div>
+          ))
+        ) : (
+          <div className="text-center py-12 text-slate-400">
+            No pipelines found.
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
